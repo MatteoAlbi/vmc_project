@@ -18,18 +18,20 @@ class PotentialField:
         self.x = 0
         self.y = 0
         self.lidar_threshold = 2
-        self.field_x = 1
+        self.field_x = 2
         self.field_y = 1
         self.field_offset_x = 0
         self.field_offset_y = 0.5
         self.field_grid_x = 20
         self.field_grid_y = 20
         self.pot_gain = 1
-        self.traj = []
+        self.traj_idx = []
         self.pot_cap = 15000
         self.need_plot = need_plot
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
-        
+        self.attr_point = [self.field_x, 0]
+        self.attr_gain = 1000
+
 
         if self.need_plot:
             _, self.ax = plt.subplots(1,2, figsize=(12,6))
@@ -52,9 +54,7 @@ class PotentialField:
         #We flip on the first axis since seaborn would plot it tother way.
         #We flip on the second axis since the y direction is positive to the left, in the opposite way as the arraaaay would go.
         self.ax[1] = sb.heatmap(self.pot_field[::-1,::-1], xticklabels=x_tick, yticklabels=y_tick, cbar=False)#, ax=self.ax[1])
-        #self.ax[1] = sb.lineplot(zip(*self.trajectory))
-        #self.ax[1] = sb.heatmap(pot_field, cbar=False)#, ax=self.ax[1])
-        plt.pause(0.001)
+        plt.pause(0.0001)
         
 
     def create_field(self):
@@ -73,45 +73,53 @@ class PotentialField:
             for j,y in enumerate(self.pot_y_points):
                 for p in self.cartesian:
                     dist_sqr = (x-p[0])**2 + (y-p[1])**2
-                    self.pot_field[i,j] += self.pot_gain / dist_sqr
+                    self.pot_field[i,j] += self.pot_gain / (dist_sqr)
+                dist_sqr = (x-self.attr_point[0])**2 + (y-self.attr_point[1])**2
+                self.pot_field[i,j] -= self.attr_gain / np.sqrt(dist_sqr)
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
-        
-        
-
+                self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
+    
     
     def make_trajectory(self):
         # trajectory
         finish = False
-        offset = [(0,1),(1,1),(1,0),(1,-1),(0,-1)]
-        self.traj = []
-        curr_point = [0,10]
-        self.traj.append(curr_point)
+        #offset = [(1,0),(0,1),(1,1),(1,-1),(0,-1)]
+        offset = [(1,0),(1,1),(1,-1)]
+        self.traj_idx = []
+        curr_point = [0,int(self.field_grid_y/2)]
+        self.traj_idx.append(curr_point)
         
         point_count = 0
-        while not finish and point_count <20:
+        while not finish and point_count < int(self.field_grid_x/1.5):
 
+            #i_min = np.argmin([ self.pot_field[curr_point[0] + offset[0][0], curr_point[1] + offset[0][1]],\
+            #                    self.pot_field[curr_point[0] + offset[1][0], curr_point[1] + offset[1][1]],\
+            #                    self.pot_field[curr_point[0] + offset[2][0], curr_point[1] + offset[2][1]],\
+            #                    self.pot_field[curr_point[0] + offset[3][0], curr_point[1] + offset[3][1]],\
+            #                    self.pot_field[curr_point[0] + offset[4][0], curr_point[1] + offset[4][1]] ])
+            
             i_min = np.argmin([ self.pot_field[curr_point[0] + offset[0][0], curr_point[1] + offset[0][1]],\
                                 self.pot_field[curr_point[0] + offset[1][0], curr_point[1] + offset[1][1]],\
-                                self.pot_field[curr_point[0] + offset[2][0], curr_point[1] + offset[2][1]],\
-                                self.pot_field[curr_point[0] + offset[3][0], curr_point[1] + offset[3][1]],\
-                                self.pot_field[curr_point[0] + offset[4][0], curr_point[1] + offset[4][1]] ])
-            curr_point = [curr_point[0] + offset[i_min][0], curr_point[1] + offset[i_min][1]]
-            self.traj.append(curr_point)
+                                self.pot_field[curr_point[0] + offset[2][0], curr_point[1] + offset[2][1]] ])
 
-            if curr_point[0] == 19 or curr_point[1] == 0 or curr_point[1] == 19:
+            self.pot_field[curr_point[0],curr_point[1]] += self.pot_cap
+            curr_point = [curr_point[0] + offset[i_min][0], curr_point[1] + offset[i_min][1]]
+            self.traj_idx.append(curr_point)
+
+            if curr_point[0] == self.field_grid_x-1 or curr_point[1] == 0 or curr_point[1] == self.field_grid_y-1:
                 finish = True
             point_count+=1
 
-        trajectory = np.array([[self.pot_x_points[x[0]], self.pot_y_points[x[1]] ] for x in self.traj])
-        self.trajectory = np.around(trajectory, decimals=2)
+        trajectory = np.array([[self.pot_x_points[x[0]], self.pot_y_points[x[1]]] for x in self.traj_idx])
+        trajectory = np.around(trajectory, decimals=2)
+        self.attr_point = trajectory[-1]
+        
 
-        print("Computed trajectory:\n",self.trajectory,"\n")
+        #print("Computed trajectory:\n",trajectory,"\n")
         if self.need_plot:
             self.plot_vision()    
 
-
-        return self.traj
-
+        return trajectory
 
 
 
@@ -145,25 +153,6 @@ class TurtleBot:
         self.prev_error = self.error
         #self.pub.publish(self.vel)
 
-    def controller_step(self):
-        
-
-        #print("Error is: "+str(left_space - right_space))
-        #print("Derivative Error is: "+str((self.error - self.prev_error)/self.sample_time))
-        #print("Cumulative Error is: "+str(self.cumulative_error))
-
-        self.vel.angular.z =  self.Kp * self.error + \
-                              self.Kd * (self.error - self.prev_error)/self.sample_time +\
-                              self.Ki * (self.cumulative_error)
-        self.prev_error = self.error
-        pass
-
-    def control_x(self):
-        pass
-
-    def control_z(self):
-        pass
-
     def pure_pursuit(self,traj):
         xt = list(x[0] for x in traj)
         yt = list(x[1] for x in traj)
@@ -173,31 +162,51 @@ class TurtleBot:
         while d_arc < self.look_ahead and step <= len(xt):
             d_arc += np.sqrt((xt[step+1] - xt[step])**2 + (yt[step+1] - yt[step])**2)
             step += 1
-   
+
         L_sq = (xt[step])**2 + (yt[step])**2
         radius = L_sq / (2 * yt[step])
+
+        print("Steer Input: ",1/radius)
+
         self.error = 1/radius
         self.cumulative_error = self.error * self.sample_time
         self.vel.angular.z =  self.Kp * self.error + \
                              self.Kd * (self.error - self.prev_error)/self.sample_time +\
                              self.Ki * (self.cumulative_error)
+        #print("Error is: "+str(left_space - right_space))
+        #print("Derivative Error is: "+str((self.error - self.prev_error)/self.sample_time))
+        #print("Cumulative Error is: "+str(self.cumulative_error))                                     
+        if len(self.lidar_readings) >0:
+            brake = 1 + np.abs(np.arctan2(yt[step], xt[step])) + 0.1* 1/np.min(self.lidar_readings)
+            self.vel.linear.x = 0.2  
+            self.vel.linear.x /= brake                                                       
+
         self.prev_error = self.error
-
-        brake = 1 + np.arctan2(yt[step], xt[step])      
-        self.vel.linear.x /= brake                                                       
-
         self.pub.publish(self.vel)
 
+    def exit_control(self):
+        self.out = True
+        for i in range(45, 90, 1):
+            if self.lidar_readings[i] != float("inf"):
+                self.out = False
         
+        for i in range(270, 315, 1):
+            if self.lidar_readings[i] != float("inf"):
+                self.out = False
+            
 
-
-
+        if self.out:
+            self.vel.linear.x = 0
+            self.vel.angular.z = 0
+            self.pub.publish(self.vel)
+            print(".............Can't find left/right wall, exiting...........")
+        
     def __init__(self):
         self.sample_time = 0.1
         self.out = False
         self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1/self.sample_time)
         self.vel = Twist()
-        self.vel.linear.x = 0
+        self.vel.linear.x = 0.4
         self.vel.angular.x = 0
         self.vel.angular.y = 0
         self.vel.angular.z = 0
@@ -213,40 +222,32 @@ class TurtleBot:
         self.left_reading = 0
         self.right_reading = 0
 
-        self.Kp = 2
-        self.Kd = 1
+        self.Kp = 0.1
+        self.Kd = 0
         self.Ki = 0
         self.error = 0
         self.prev_error = 0
         self.cumulative_error = 0
 
-        self.look_ahead = 0.2
+        self.look_ahead = 0.3
         self.k_brake = 0.1
 
         rospy.Subscriber('odom', Odometry, self.call_position)
         rospy.Subscriber('scan', LaserScan, self.call_Lidar)
 
-        PotField = PotentialField(need_plot=True)
+        PotField = PotentialField(need_plot=False)
 
         while not rospy.is_shutdown() and not self.out:
             
             PotField.lidar_readings = self.lidar_readings
             PotField.create_field()
             traj = PotField.make_trajectory()
-            self.avoid_walls()
-            #self.pure_pursuit(traj)
+            self.pure_pursuit(traj)
+            if len(self.lidar_readings) > 0:
+                self.exit_control()
 
             #print("Commanded velocity: "+str(self.vel.angular.z))
-            print("Yaw: "+str(self.yaw))
-            
-
-            if self.left_reading == float("inf") or self.right_reading == float("inf"):
-                self.out = True
-                self.vel.linear.x = 0
-                self.vel.angular.z = 0
-
-                self.pub.publish(self.vel)
-                print(".............Can't find left/right wall, exiting...........")
+            #print("Yaw: "+str(self.yaw)
             
             self.rate.sleep()
 
