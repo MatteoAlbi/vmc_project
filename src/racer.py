@@ -1,5 +1,6 @@
 #! /usr/bin/env python3
 
+from re import S
 import rospy
 import numpy as np
 from geometry_msgs.msg import Twist
@@ -72,15 +73,15 @@ class PotentialField:
         for i,x in enumerate(self.pot_x_points):
             for j,y in enumerate(self.pot_y_points):
                 for p in self.cartesian:
-                    dist_sqr = (x-p[0])**2 + (y-p[1])**2
+                    dist_sqr = (x-p[0])**2 + abs(y-p[1])#**2
                     self.pot_field[i,j] += self.pot_gain / (dist_sqr)
-                dist_sqr = (x-self.attr_point[0])**2 + (y-self.attr_point[1])**2
+                dist_sqr = abs(x-self.attr_point[0]) + (y-self.attr_point[1])**2
                 self.pot_field[i,j] -= self.attr_gain / np.sqrt(dist_sqr)
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
                 self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
     
     
-    def make_trajectory(self):
+    def make_trajectory(self, prev_traj):
         # trajectory
         finish = False
         #offset = [(1,0),(0,1),(1,1),(1,-1),(0,-1)]
@@ -166,7 +167,7 @@ class TurtleBot:
         L_sq = (xt[step])**2 + (yt[step])**2
         radius = L_sq / (2 * yt[step])
 
-        print("Steer Input: ",1/radius)
+        #print("Steer Input: ",1/radius)
 
         self.error = 1/radius
         self.cumulative_error = self.error * self.sample_time
@@ -177,9 +178,14 @@ class TurtleBot:
         #print("Derivative Error is: "+str((self.error - self.prev_error)/self.sample_time))
         #print("Cumulative Error is: "+str(self.cumulative_error))                                     
         if len(self.lidar_readings) >0:
-            brake = 1 + np.abs(np.arctan2(yt[step], xt[step])) + 0.1* 1/np.min(self.lidar_readings)
-            self.vel.linear.x = 0.2  
-            self.vel.linear.x /= brake                                                       
+            large_cone = np.array([*self.lidar_readings[-30:], *self.lidar_readings[:30]])
+            large_dist = np.min(large_cone)
+            ahead_dist = np.min(large_cone[25:35])
+
+            brake = 1 + np.abs(np.arctan2(yt[step], xt[step]))\
+                    + self.k_brake_large* 1/(large_dist)\
+                    + self.k_brake_ahead* 1/(ahead_dist)
+            self.vel.linear.x = self.max_v / brake                                                      
 
         self.prev_error = self.error
         self.pub.publish(self.vel)
@@ -222,15 +228,18 @@ class TurtleBot:
         self.left_reading = 0
         self.right_reading = 0
 
-        self.Kp = 0.1
-        self.Kd = 0
-        self.Ki = 0
+        self.Kp = 0.5
+        self.Kd = 0.05
+        self.Ki = 0.02
         self.error = 0
         self.prev_error = 0
         self.cumulative_error = 0
+        self.max_v = 1.4
 
-        self.look_ahead = 0.3
-        self.k_brake = 0.1
+        self.look_ahead = 0.5
+        self.traj = []
+        self.k_brake_large = 0.5
+        self.k_brake_ahead = 0.8
 
         rospy.Subscriber('odom', Odometry, self.call_position)
         rospy.Subscriber('scan', LaserScan, self.call_Lidar)
@@ -241,8 +250,8 @@ class TurtleBot:
             
             PotField.lidar_readings = self.lidar_readings
             PotField.create_field()
-            traj = PotField.make_trajectory()
-            self.pure_pursuit(traj)
+            self.traj = PotField.make_trajectory(self.traj)
+            self.pure_pursuit(self.traj)
             if len(self.lidar_readings) > 0:
                 self.exit_control()
 
