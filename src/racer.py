@@ -5,6 +5,12 @@ import numpy as np
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
+
+import struct
+from sensor_msgs import point_cloud2
+from sensor_msgs.msg import PointCloud2, PointField
+from std_msgs.msg import Header
+
 from tf.transformations import euler_from_quaternion
 import numpy as np
 import seaborn as sb
@@ -29,33 +35,14 @@ class PotentialField:
         self.pot_cap = 15000
         self.need_plot = need_plot
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
+        self.pot_stamp = 0
         
+        self.pub_cloud = rospy.Publisher("pot_field", PointCloud2, queue_size=2)
 
         if self.need_plot:
             _, self.ax = plt.subplots(1,2, figsize=(12,6))
             self.ax[1] = sb.heatmap(self.pot_field, cbar=False)
-            self.ax[1].invert_yaxis()
-
-
-    def plot_vision(self):
-        x, y = zip(*self.cartesian)
-        self.ax[0].clear()
-        self.ax[0].scatter([ -i for i in list(y)],x)
-        self.ax[0].scatter(0,0)
-        self.ax[0].set_xlim([-self.field_offset_y, self.field_y-self.field_offset_y])
-        self.ax[0].set_ylim([-self.lidar_threshold, self.lidar_threshold])
-        self.ax[0].grid()
-        y_tick = np.linspace(0-self.field_offset_x, self.field_x-self.field_offset_x, self.field_grid_x)
-        x_tick = np.linspace(0-self.field_offset_y, self.field_y-self.field_offset_y, self.field_grid_y)
-        y_tick = np.around(y_tick,decimals=2)[::-1]
-        x_tick = np.around(x_tick,decimals=2)[::-1]
-        #We flip on the first axis since seaborn would plot it tother way.
-        #We flip on the second axis since the y direction is positive to the left, in the opposite way as the arraaaay would go.
-        self.ax[1] = sb.heatmap(self.pot_field[::-1,::-1], xticklabels=x_tick, yticklabels=y_tick, cbar=False)#, ax=self.ax[1])
-        #self.ax[1] = sb.lineplot(zip(*self.trajectory))
-        #self.ax[1] = sb.heatmap(pot_field, cbar=False)#, ax=self.ax[1])
-        plt.pause(0.001)
-        
+            self.ax[1].invert_yaxis()        
 
     def create_field(self):
         self.cartesian = []
@@ -75,9 +62,44 @@ class PotentialField:
                     dist_sqr = (x-p[0])**2 + (y-p[1])**2
                     self.pot_field[i,j] += self.pot_gain / dist_sqr
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
-        
-        
 
+    def rviz_field(self):
+
+        x = np.repeat(self.pot_x_points, self.field_grid_y)
+        y = np.tile(self.pot_y_points, self.field_grid_x)
+        pot = np.asarray(self.pot_field).reshape(-1)
+        z = np.log(pot + 1) / 4
+        
+        r = (255 - pot/self.pot_cap*255).astype(np.ubyte)
+        b = (pot/self.pot_cap*255).astype(np.ubyte)
+        g = np.ones(r.shape, np.ubyte) * 127
+        a = np.ones(r.shape, np.ubyte) * 200
+
+        xyzrgba = np.transpose(np.vstack((x,y,z,r,g,b,a)))
+
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1),
+            PointField('r', 12, PointField.UINT8, 1),
+            PointField('g', 13, PointField.UINT8, 1),
+            PointField('b', 14, PointField.UINT8, 1),
+            PointField('a', 15, PointField.UINT8, 1)
+        ]
+
+        header = Header()
+        header.frame_id = "pot_field"
+        #header.stamp = self.pot_stamp
+
+        pc2 = point_cloud2.create_cloud(header, fields, xyzrgba.tolist())
+
+        #msg.is_bigendian = False
+        #msg.point_step = 16
+        #msg.row_step = msg.point_step * self.field_grid_y
+        #msg.is_dense = True
+        #msg.data = xyzrgba.tostring()
+
+        self.pub_cloud.publish(pc2)
     
     def make_trajectory(self):
         # trajectory
@@ -107,7 +129,7 @@ class PotentialField:
 
         print("Computed trajectory:\n",self.trajectory,"\n")
         if self.need_plot:
-            self.plot_vision()    
+            self.rviz_field()    
 
 
         return self.traj
@@ -188,9 +210,6 @@ class TurtleBot:
 
         self.pub.publish(self.vel)
 
-        
-
-
 
     def __init__(self):
         self.sample_time = 0.1
@@ -231,6 +250,7 @@ class TurtleBot:
         while not rospy.is_shutdown() and not self.out:
             
             PotField.lidar_readings = self.lidar_readings
+            PotField.pot_stamp = rospy.get_rostime()
             PotField.create_field()
             traj = PotField.make_trajectory()
             self.avoid_walls()
