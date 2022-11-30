@@ -162,39 +162,43 @@ class TurtleBot:
         self.lidar_readings = msg.ranges
 
     def pure_pursuit(self,traj):
+        # split trajectory coordinates (local frame)
         xt = list(x[0] for x in traj)
         yt = list(x[1] for x in traj)
 
         d_arc = 0
         step = 0
+        # move about look ahead distance
         while d_arc < self.look_ahead and step <= len(xt):
             d_arc += np.sqrt((xt[step+1] - xt[step])**2 + (yt[step+1] - yt[step])**2)
             step += 1
 
+        # obtain radius: all coordinates are already in local frame
         L_sq = (xt[step])**2 + (yt[step])**2
         radius = L_sq / (2 * yt[step])
 
-        #print("Steer Input: ",1/radius)
-
+        # yaw = 0 in local frame
         self.error = 1/radius
+        # apply PID control to angular vel
         self.cumulative_error = self.error * self.sample_time
         self.vel.angular.z =  self.Kp * self.error + \
                              self.Kd * (self.error - self.prev_error)/self.sample_time +\
                              self.Ki * (self.cumulative_error)
-        #print("Error is: "+str(left_space - right_space))
-        #print("Derivative Error is: "+str((self.error - self.prev_error)/self.sample_time))
-        #print("Cumulative Error is: "+str(self.cumulative_error))                                     
+        self.prev_error = self.error
+        
+        # limiter to speed
         if len(self.lidar_readings) >0:
             large_cone = np.array([*self.lidar_readings[-30:], *self.lidar_readings[:30]])
-            large_dist = np.min(large_cone)
-            ahead_dist = np.min(large_cone[25:35])
+            large_dist = np.min(large_cone) # closest point distance on the sides
+            ahead_dist = np.min(large_cone[25:35]) # closest point distance in the front
 
-            brake = 1 + np.abs(np.arctan2(yt[step], xt[step]))\
-                    + self.k_brake_large* 1/(large_dist)\
-                    + self.k_brake_ahead* 1/(ahead_dist)
-            self.vel.linear.x = self.max_v / brake                                                      
+            # compute brake factor
+            brake = 1 + np.abs(np.arctan2(yt[step], xt[step])) # deviation from desired heading direction
+            brake += self.k_brake_large* 1/(large_dist) # sides distance factor
+            brake += self.k_brake_ahead* 1/(ahead_dist) # front distance factor
+            self.vel.linear.x = self.max_v / brake      # limiting speed                                               
 
-        self.prev_error = self.error
+        
         self.pub.publish(self.vel)
 
     def exit_control(self):
