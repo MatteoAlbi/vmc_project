@@ -178,9 +178,9 @@ class TurtleBot:
         #print("Derivative Error is: "+str((self.error - self.prev_error)/self.sample_time))
         #print("Cumulative Error is: "+str(self.cumulative_error))                                     
         if len(self.lidar_readings) >0:
-            large_cone = np.array([*self.lidar_readings[-30:], *self.lidar_readings[:30]])
+            large_cone = np.array([*self.lidar_readings[-35:], *self.lidar_readings[:35]])
             large_dist = np.min(large_cone)
-            ahead_dist = np.min(large_cone[25:35])
+            ahead_dist = np.min(large_cone[28:32])
 
             brake = 1 + np.abs(np.arctan2(yt[step], xt[step]))\
                     + self.k_brake_large* 1/(large_dist)\
@@ -208,16 +208,8 @@ class TurtleBot:
             print(".............Can't find left/right wall, exiting...........")
         
     def __init__(self):
-        self.sample_time = 0.1
+        self.sample_time = 0.05
         self.out = False
-        self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1/self.sample_time)
-        self.vel = Twist()
-        self.vel.linear.x = 0.4
-        self.vel.angular.x = 0
-        self.vel.angular.y = 0
-        self.vel.angular.z = 0
-        self.pub.publish(self.vel)
-        self.rate = rospy.Rate(1/self.sample_time) 
 
         self.x = 0
         self.y = 0
@@ -228,9 +220,9 @@ class TurtleBot:
         self.left_reading = 0
         self.right_reading = 0
 
-        self.Kp = 0.5
-        self.Kd = 0.05
-        self.Ki = 0.02
+        self.Kp = 0.58
+        self.Kd = 0.03
+        self.Ki = 0.0075
         self.error = 0
         self.prev_error = 0
         self.cumulative_error = 0
@@ -238,11 +230,20 @@ class TurtleBot:
 
         self.look_ahead = 0.5
         self.traj = []
-        self.k_brake_large = 0.5
-        self.k_brake_ahead = 0.8
+        self.k_brake_large = 0.26
+        self.k_brake_ahead = 1.2
 
-        rospy.Subscriber('odom', Odometry, self.call_position)
+        #rospy.Subscriber('odom', Odometry, self.call_position)
         rospy.Subscriber('scan', LaserScan, self.call_Lidar)
+
+        self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1/self.sample_time)
+        self.vel = Twist()
+        self.vel.linear.x = self.max_v 
+        self.vel.angular.x = 0
+        self.vel.angular.y = 0
+        self.vel.angular.z = 0
+        self.pub.publish(self.vel)
+        self.rate = rospy.Rate(1/self.sample_time) 
 
         PotField = PotentialField(need_plot=False)
 
