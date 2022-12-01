@@ -5,10 +5,17 @@ import numpy as np
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
+
+from sensor_msgs import point_cloud2
+from sensor_msgs.msg import PointCloud2, PointField
+from std_msgs.msg import Header
+
 from tf.transformations import euler_from_quaternion
 import numpy as np
 import seaborn as sb
 import matplotlib.pyplot as plt
+
+BOOL_PLOT = False
 
 class PotentialField:
 
@@ -47,7 +54,9 @@ class PotentialField:
         # initialization
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
         self.attr_point = [self.field_x, 0]
+        self.pot_stamp = 0
         
+        self.pub_cloud = rospy.Publisher("sensor_msgs/PointCloud2", PointCloud2, queue_size=2)
 
         if self.need_plot:
             # plot window
@@ -56,7 +65,7 @@ class PotentialField:
             self.ax[1].invert_yaxis()
 
 
-    def plot_vision(self):
+    def plot_heatmap(self):
         # unpack x and y coordinates for each point
         x, y = zip(*self.cartesian)
         self.ax[0].clear()
@@ -88,7 +97,6 @@ class PotentialField:
                 self.cartesian.append([np.cos(i*np.pi/180)*d, np.sin(i*np.pi/180)*d])
 
         # Potential Field
-        
         for i,x in enumerate(self.pot_x_points): # x coordinate on potential grid
             for j,y in enumerate(self.pot_y_points): # y coordinate of potential grid
                 for p in self.cartesian: # lidar points
@@ -104,7 +112,85 @@ class PotentialField:
                 # apply potential cap
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
                 self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
-    
+
+
+    def rviz_field_color(self):
+        pot = np.asarray(self.pot_field).reshape(-1)
+
+        # create x,y,z coordinate
+        x = np.repeat(self.pot_x_points, self.field_grid_y).astype(np.float32)
+        y = np.tile(self.pot_y_points, self.field_grid_x).astype(np.float32)
+        z = (np.log(pot + 1) / 4).astype(np.float32)
+        
+        # create color field
+        #r = (255 - pot/self.pot_cap*255).astype(np.ubyte)
+        #b = (pot/self.pot_cap*255).astype(np.ubyte)
+        r = np.ones(pot.shape, np.ubyte) * 0
+        g = np.ones(pot.shape, np.ubyte) * 0
+        b = np.ones(pot.shape, np.ubyte) * 255
+        a = np.ones(pot.shape, np.ubyte) * 0
+        # convert to UINT32
+        rgba = np.hstack((r,g,b,a))
+        rgba = rgba.view("uint32")
+
+        # Structured array
+        xyzrgba = np.zeros( (x.shape), \
+            dtype={
+                "names": ("x", "y", "z", "rgba"),
+                "formats": ("f4", "f4", "f4", "u4")} ) 
+
+        xyzrgba["x"] = x
+        xyzrgba["y"] = y
+        xyzrgba["z"] = z
+        xyzrgba["rgba"] = rgba
+
+        #xyzrgba = np.transpose(np.vstack((x,y,z,r,g,b,a)))
+        #xyz = np.transpose(np.vstack((x,y,z)))
+
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1),
+            PointField('rgb', 12, PointField.UINT32, 1)
+        ]
+
+        header = Header()
+        header.frame_id = "pot_field"
+        header.stamp = self.pot_stamp
+
+        pc2 = point_cloud2.create_cloud(header, fields, xyzrgba)
+        #print(pc2)
+
+        #msg.is_bigendian = False
+        #msg.point_step = 16
+        #msg.row_step = msg.point_step * self.field_grid_y
+        #msg.is_dense = True
+        #msg.data = xyzrgba.tostring()
+
+        self.pub_cloud.publish(pc2)
+
+    def rviz_field(self):
+        pot = np.asarray(self.pot_field).reshape(-1)
+
+        # create x,y,z coordinate
+        x = np.repeat(self.pot_x_points, self.field_grid_y).astype(np.float32)
+        y = np.tile(self.pot_y_points, self.field_grid_x).astype(np.float32)
+        z = (np.log(pot + 1) / 4).astype(np.float32)
+
+        xyz = np.transpose(np.vstack((x,y,z)))
+
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1)
+        ]
+
+        header = Header()
+        header.frame_id = "pot_field"
+        header.stamp = self.pot_stamp
+
+        pc2 = point_cloud2.create_cloud(header, fields, xyz)
+        self.pub_cloud.publish(pc2)
     
     def make_trajectory(self):
         finish = False
@@ -134,12 +220,14 @@ class PotentialField:
 
         # switch from grid coordinates to local coordinates
         trajectory = np.array([[self.pot_x_points[x[0]], self.pot_y_points[x[1]]] for x in self.traj_idx])
-        trajectory = np.around(trajectory, decimals=2)
         # set attraction point as last point of the trajectory
         self.attr_point = trajectory[-1]
         
+        #trajectory = np.around(trajectory, decimals=2)
+        #print("Computed trajectory:\n",self.trajectory,"\n")
+
         if self.need_plot:
-            self.plot_vision()    
+            self.rviz_field()    
 
         return trajectory
 
@@ -160,6 +248,8 @@ class TurtleBot:
     def call_Lidar(self, msg):
         # get lidar readings from subscriber
         self.lidar_readings = msg.ranges
+
+        if self.PotField.need_plot: self.PotField.pot_stamp = rospy.Time.now()
 
     def pure_pursuit(self,traj):
         # split trajectory coordinates (local frame)
@@ -230,6 +320,8 @@ class TurtleBot:
         self.y = 0
         self.yaw = 0
 
+        # initialize potential field object to compute trajectory
+        self.PotField = PotentialField(need_plot=BOOL_PLOT)
         self.lidar_readings = []
 
         # PID parameters
@@ -256,10 +348,7 @@ class TurtleBot:
         #rospy.Subscriber('odom', Odometry, self.call_position) # not used
         rospy.Subscriber('scan', LaserScan, self.call_Lidar)
 
-        # initialize potential field object to compute trajectory
-        PotField = PotentialField(need_plot=False)
-
-        # control velocitty message
+        # control velocity message
         self.vel = Twist()
         self.vel.linear.x = self.max_v 
         self.vel.angular.x = 0
@@ -274,9 +363,10 @@ class TurtleBot:
         # running loop
         while not rospy.is_shutdown() and not self.out: 
             # compute trajectory using potential field
-            PotField.lidar_readings = self.lidar_readings
-            PotField.create_field()
-            self.traj = PotField.make_trajectory()
+            self.PotField.lidar_readings = self.lidar_readings
+            if self.PotField.need_plot: self.PotField.pot_stamp = rospy.get_rostime()
+            self.PotField.create_field()
+            self.traj = self.PotField.make_trajectory()
             # pure pursuit trajectory follower
             self.pure_pursuit(self.traj)
             # check stop condition
