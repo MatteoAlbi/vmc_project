@@ -15,7 +15,7 @@ import numpy as np
 import seaborn as sb
 import matplotlib.pyplot as plt
 
-BOOL_PLOT = False
+BOOL_PLOT = True
 
 class PotentialField:
 
@@ -64,29 +64,6 @@ class PotentialField:
             self.ax[1] = sb.heatmap(self.pot_field, cbar=False)
             self.ax[1].invert_yaxis()
 
-
-    def plot_heatmap(self):
-        # unpack x and y coordinates for each point
-        x, y = zip(*self.cartesian)
-        self.ax[0].clear()
-        # cartesian coordinates of the lidar readings
-        self.ax[0].scatter([ -i for i in list(y)],x)
-        self.ax[0].scatter(0,0)
-        self.ax[0].set_xlim([-self.field_offset_y, self.field_y-self.field_offset_y])
-        self.ax[0].set_ylim([-self.lidar_threshold, self.lidar_threshold])
-        self.ax[0].grid()
-        # heatmap of the potential
-        y_tick = np.linspace(0-self.field_offset_x, self.field_x-self.field_offset_x, self.field_grid_x)
-        x_tick = np.linspace(0-self.field_offset_y, self.field_y-self.field_offset_y, self.field_grid_y)
-        
-        x_tick = np.around(x_tick,decimals=2)[::-1] # We flip on the first axis since seaborn would plot it the other way
-        y_tick = np.around(y_tick,decimals=2)[::-1] # We flip on the second axis since the y direction is positive to the left, in the opposite way as the array would go
-        
-        #plot
-        self.ax[1] = sb.heatmap(self.pot_field[::-1,::-1], xticklabels=x_tick, yticklabels=y_tick, cbar=False)#, ax=self.ax[1])
-        plt.pause(0.0001)
-        
-
     def create_field(self):
         self.cartesian = []
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
@@ -114,7 +91,71 @@ class PotentialField:
                 self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
 
 
-    def rviz_field_color(self):
+    def make_trajectory(self):
+        finish = False
+        # offset in grid coordinates
+        offset = [(1,0),(1,1),(1,-1)]
+        self.traj_idx = []
+        # current position of the robot in the potential grid
+        curr_point = [int( self.field_grid_x * self.field_offset_x / self.field_x), int( self.field_grid_y * self.field_offset_y / self.field_y)]
+        self.traj_idx.append(curr_point)
+        
+        point_count = 0 # limit number of point of trajectory as function of number of point in x direction
+        while not finish and point_count < int(self.field_grid_x/1.5):
+            # check potential in front points, choose point with lowest potential            
+            i_min = np.argmin([ self.pot_field[curr_point[0] + offset[0][0], curr_point[1] + offset[0][1]],\
+                                self.pot_field[curr_point[0] + offset[1][0], curr_point[1] + offset[1][1]],\
+                                self.pot_field[curr_point[0] + offset[2][0], curr_point[1] + offset[2][1]] ])
+            # increment curr point before switching to visualize trajectory
+            #if self.need_plot: self.pot_field[curr_point[0],curr_point[1]] += self.pot_cap
+            # switch point and add to traj
+            curr_point = [curr_point[0] + offset[i_min][0], curr_point[1] + offset[i_min][1]]
+            self.traj_idx.append(curr_point)
+
+            # termination condition: extremes of the grid
+            if curr_point[0] == self.field_grid_x-1 or curr_point[1] == 0 or curr_point[1] == self.field_grid_y-1:
+                finish = True
+            point_count += 1
+
+        # switch from grid coordinates to local coordinates
+        trajectory = np.array([[self.pot_x_points[x[0]], self.pot_y_points[x[1]]] for x in self.traj_idx])
+        # set attraction point as last point of the trajectory
+        self.attr_point = trajectory[-1]
+        
+        #trajectory = np.around(trajectory, decimals=2)
+        #print("Computed trajectory:\n",self.trajectory,"\n")
+
+        if self.need_plot:
+            self.rviz_field()    
+
+        return trajectory
+
+
+# NOT USED: TOO HEAVY COMPUTATIONS
+    def plot_heatmap(self):
+        # unpack x and y coordinates for each point
+        x, y = zip(*self.cartesian)
+        self.ax[0].clear()
+        # cartesian coordinates of the lidar readings
+        self.ax[0].scatter([ -i for i in list(y)],x)
+        self.ax[0].scatter(0,0)
+        self.ax[0].set_xlim([-self.field_offset_y, self.field_y-self.field_offset_y])
+        self.ax[0].set_ylim([-self.lidar_threshold, self.lidar_threshold])
+        self.ax[0].grid()
+        # heatmap of the potential
+        y_tick = np.linspace(0-self.field_offset_x, self.field_x-self.field_offset_x, self.field_grid_x)
+        x_tick = np.linspace(0-self.field_offset_y, self.field_y-self.field_offset_y, self.field_grid_y)
+        
+        x_tick = np.around(x_tick,decimals=2)[::-1] # We flip on the first axis since seaborn would plot it the other way
+        y_tick = np.around(y_tick,decimals=2)[::-1] # We flip on the second axis since the y direction is positive to the left, in the opposite way as the array would go
+        
+        #plot
+        self.ax[1] = sb.heatmap(self.pot_field[::-1,::-1], xticklabels=x_tick, yticklabels=y_tick, cbar=False)#, ax=self.ax[1])
+        plt.pause(0.0001)
+        
+
+# NOT USED, NEED FURTHER DEVELOP
+    def rviz_field_color(self): 
         pot = np.asarray(self.pot_field).reshape(-1)
 
         # create x,y,z coordinate
@@ -175,62 +216,19 @@ class PotentialField:
         # create x,y,z coordinate
         x = np.repeat(self.pot_x_points, self.field_grid_y).astype(np.float32)
         y = np.tile(self.pot_y_points, self.field_grid_x).astype(np.float32)
-        z = (np.log(pot + 1) / 4).astype(np.float32)
-
+        #z = (pot + self.pot_cap)/30000*9999 + 1  # range 1 / 1k
+        #z = np.log10(z) - 2 # range -2 / 2
+        z = pot/10000
+        # aggregate data
         xyz = np.transpose(np.vstack((x,y,z)))
-
-        fields = [
-            PointField('x', 0, PointField.FLOAT32, 1),
-            PointField('y', 4, PointField.FLOAT32, 1),
-            PointField('z', 8, PointField.FLOAT32, 1)
-        ]
-
+        # header info
         header = Header()
         header.frame_id = "pot_field"
         header.stamp = self.pot_stamp
 
-        pc2 = point_cloud2.create_cloud(header, fields, xyz)
+        # create message and publish cloudpoint
+        pc2 = point_cloud2.create_cloud_xyz32(header, xyz)
         self.pub_cloud.publish(pc2)
-    
-    def make_trajectory(self):
-        finish = False
-        # offset in grid coordinates
-        offset = [(1,0),(1,1),(1,-1)]
-        self.traj_idx = []
-        # current position of the robot in the potential grid
-        curr_point = [int( self.field_grid_x * self.field_offset_x / self.field_x), int( self.field_grid_y * self.field_offset_y / self.field_y)]
-        self.traj_idx.append(curr_point)
-        
-        point_count = 0 # limit number of point of trajectory as function of number of point in x direction
-        while not finish and point_count < int(self.field_grid_x/1.5):
-            # check potential in front points, choose point with lowest potential            
-            i_min = np.argmin([ self.pot_field[curr_point[0] + offset[0][0], curr_point[1] + offset[0][1]],\
-                                self.pot_field[curr_point[0] + offset[1][0], curr_point[1] + offset[1][1]],\
-                                self.pot_field[curr_point[0] + offset[2][0], curr_point[1] + offset[2][1]] ])
-            # increment curr point before switching to visualize trajectory
-            if self.need_plot: self.pot_field[curr_point[0],curr_point[1]] += self.pot_cap
-            # switch point and add to traj
-            curr_point = [curr_point[0] + offset[i_min][0], curr_point[1] + offset[i_min][1]]
-            self.traj_idx.append(curr_point)
-
-            # termination condition: extremes of the grid
-            if curr_point[0] == self.field_grid_x-1 or curr_point[1] == 0 or curr_point[1] == self.field_grid_y-1:
-                finish = True
-            point_count += 1
-
-        # switch from grid coordinates to local coordinates
-        trajectory = np.array([[self.pot_x_points[x[0]], self.pot_y_points[x[1]]] for x in self.traj_idx])
-        # set attraction point as last point of the trajectory
-        self.attr_point = trajectory[-1]
-        
-        #trajectory = np.around(trajectory, decimals=2)
-        #print("Computed trajectory:\n",self.trajectory,"\n")
-
-        if self.need_plot:
-            self.rviz_field()    
-
-        return trajectory
-
 
 
 class TurtleBot:
@@ -344,7 +342,7 @@ class TurtleBot:
         self.k_brake_large = 0.4 # may be lowered
         self.k_brake_ahead = 0.8 # may be rised
 
-        # subscriber to retrieve x,y,yaw and lidar readings
+        # subscriber to retrieve x, y, yaw and lidar readings
         #rospy.Subscriber('odom', Odometry, self.call_position) # not used
         rospy.Subscriber('scan', LaserScan, self.call_Lidar)
 
@@ -355,7 +353,7 @@ class TurtleBot:
         self.vel.angular.y = 0
         self.vel.angular.z = 0
 
-        self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1/self.sample_time)
+        self.pub = rospy.Publisher('cmd_vel', Twist, queue_size = 1/self.sample_time)
         self.pub.publish(self.vel)
 
         self.out = False # stop boolean
