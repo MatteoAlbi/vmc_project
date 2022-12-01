@@ -6,7 +6,6 @@ from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 
-import struct
 from sensor_msgs import point_cloud2
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
@@ -37,7 +36,7 @@ class PotentialField:
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
         self.pot_stamp = 0
         
-        self.pub_cloud = rospy.Publisher("pot_field", PointCloud2, queue_size=2)
+        self.pub_cloud = rospy.Publisher("sensor_msgs/PointCloud2", PointCloud2, queue_size=2)
 
         if self.need_plot:
             _, self.ax = plt.subplots(1,2, figsize=(12,6))
@@ -63,35 +62,52 @@ class PotentialField:
                     self.pot_field[i,j] += self.pot_gain / dist_sqr
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
 
-    def rviz_field(self):
-
-        x = np.repeat(self.pot_x_points, self.field_grid_y)
-        y = np.tile(self.pot_y_points, self.field_grid_x)
+    def rviz_field_color(self):
         pot = np.asarray(self.pot_field).reshape(-1)
-        z = np.log(pot + 1) / 4
-        
-        r = (255 - pot/self.pot_cap*255).astype(np.ubyte)
-        b = (pot/self.pot_cap*255).astype(np.ubyte)
-        g = np.ones(r.shape, np.ubyte) * 127
-        a = np.ones(r.shape, np.ubyte) * 200
 
-        xyzrgba = np.transpose(np.vstack((x,y,z,r,g,b,a)))
+        # create x,y,z coordinate
+        x = np.repeat(self.pot_x_points, self.field_grid_y).astype(np.float32)
+        y = np.tile(self.pot_y_points, self.field_grid_x).astype(np.float32)
+        z = (np.log(pot + 1) / 4).astype(np.float32)
+        
+        # create color field
+        #r = (255 - pot/self.pot_cap*255).astype(np.ubyte)
+        #b = (pot/self.pot_cap*255).astype(np.ubyte)
+        r = np.ones(pot.shape, np.ubyte) * 0
+        g = np.ones(pot.shape, np.ubyte) * 0
+        b = np.ones(pot.shape, np.ubyte) * 255
+        a = np.ones(pot.shape, np.ubyte) * 0
+        # convert to UINT32
+        rgba = np.hstack((r,g,b,a))
+        rgba = rgba.view("uint32")
+
+        # Structured array
+        xyzrgba = np.zeros( (x.shape), \
+            dtype={
+                "names": ("x", "y", "z", "rgba"),
+                "formats": ("f4", "f4", "f4", "u4")} ) 
+
+        xyzrgba["x"] = x
+        xyzrgba["y"] = y
+        xyzrgba["z"] = z
+        xyzrgba["rgba"] = rgba
+
+        #xyzrgba = np.transpose(np.vstack((x,y,z,r,g,b,a)))
+        #xyz = np.transpose(np.vstack((x,y,z)))
 
         fields = [
             PointField('x', 0, PointField.FLOAT32, 1),
             PointField('y', 4, PointField.FLOAT32, 1),
             PointField('z', 8, PointField.FLOAT32, 1),
-            PointField('r', 12, PointField.UINT8, 1),
-            PointField('g', 13, PointField.UINT8, 1),
-            PointField('b', 14, PointField.UINT8, 1),
-            PointField('a', 15, PointField.UINT8, 1)
+            PointField('rgb', 12, PointField.UINT32, 1)
         ]
 
         header = Header()
         header.frame_id = "pot_field"
-        #header.stamp = self.pot_stamp
+        header.stamp = self.pot_stamp
 
-        pc2 = point_cloud2.create_cloud(header, fields, xyzrgba.tolist())
+        pc2 = point_cloud2.create_cloud(header, fields, xyzrgba)
+        #print(pc2)
 
         #msg.is_bigendian = False
         #msg.point_step = 16
@@ -99,6 +115,29 @@ class PotentialField:
         #msg.is_dense = True
         #msg.data = xyzrgba.tostring()
 
+        self.pub_cloud.publish(pc2)
+
+    def rviz_field(self):
+        pot = np.asarray(self.pot_field).reshape(-1)
+
+        # create x,y,z coordinate
+        x = np.repeat(self.pot_x_points, self.field_grid_y).astype(np.float32)
+        y = np.tile(self.pot_y_points, self.field_grid_x).astype(np.float32)
+        z = (np.log(pot + 1) / 4).astype(np.float32)
+
+        xyz = np.transpose(np.vstack((x,y,z)))
+
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1)
+        ]
+
+        header = Header()
+        header.frame_id = "pot_field"
+        header.stamp = self.pot_stamp
+
+        pc2 = point_cloud2.create_cloud(header, fields, xyz)
         self.pub_cloud.publish(pc2)
     
     def make_trajectory(self):
@@ -127,7 +166,7 @@ class PotentialField:
         trajectory = np.array([[self.pot_x_points[x[0]], self.pot_y_points[x[1]] ] for x in self.traj])
         self.trajectory = np.around(trajectory, decimals=2)
 
-        print("Computed trajectory:\n",self.trajectory,"\n")
+        #print("Computed trajectory:\n",self.trajectory,"\n")
         if self.need_plot:
             self.rviz_field()    
 
@@ -150,41 +189,8 @@ class TurtleBot:
 
     def call_Lidar(self, msg):
         self.lidar_readings = msg.ranges
-        self.front_reading = msg.ranges[0]
-        self.left_reading = msg.ranges[90]
-        self.right_reading = msg.ranges[270]
 
-    def avoid_walls(self):
-        left_space = np.min([np.abs(self.left_reading - self.y),1])
-        right_space = np.min([np.abs(self.right_reading - self.y),1])
-        self.error =  np.max([np.min([left_space - right_space,1]),-1])
-        self.cumulative_error += self.error * self.sample_time
-
-        self.vel.angular.z =  self.Kp * self.error + \
-                              self.Kd * (self.error - self.prev_error)/self.sample_time +\
-                              self.Ki * (self.cumulative_error)
-
-        self.prev_error = self.error
-        #self.pub.publish(self.vel)
-
-    def controller_step(self):
-        
-
-        #print("Error is: "+str(left_space - right_space))
-        #print("Derivative Error is: "+str((self.error - self.prev_error)/self.sample_time))
-        #print("Cumulative Error is: "+str(self.cumulative_error))
-
-        self.vel.angular.z =  self.Kp * self.error + \
-                              self.Kd * (self.error - self.prev_error)/self.sample_time +\
-                              self.Ki * (self.cumulative_error)
-        self.prev_error = self.error
-        pass
-
-    def control_x(self):
-        pass
-
-    def control_z(self):
-        pass
+        self.PotField.pot_stamp = rospy.Time.now()
 
     def pure_pursuit(self,traj):
         xt = list(x[0] for x in traj)
@@ -228,9 +234,8 @@ class TurtleBot:
         self.yaw = 0
 
         self.lidar_readings = []
-        self.front_reading = 0
-        self.left_reading = 0
-        self.right_reading = 0
+        self.PotField = PotentialField(need_plot=True)
+
 
         self.Kp = 2
         self.Kd = 1
@@ -245,28 +250,26 @@ class TurtleBot:
         rospy.Subscriber('odom', Odometry, self.call_position)
         rospy.Subscriber('scan', LaserScan, self.call_Lidar)
 
-        PotField = PotentialField(need_plot=True)
-
+        
         while not rospy.is_shutdown() and not self.out:
             
-            PotField.lidar_readings = self.lidar_readings
-            PotField.pot_stamp = rospy.get_rostime()
-            PotField.create_field()
-            traj = PotField.make_trajectory()
-            self.avoid_walls()
+            self.PotField.lidar_readings = self.lidar_readings
+            self.PotField.pot_stamp = rospy.get_rostime()
+            self.PotField.create_field()
+            traj = self.PotField.make_trajectory()
             #self.pure_pursuit(traj)
 
             #print("Commanded velocity: "+str(self.vel.angular.z))
-            print("Yaw: "+str(self.yaw))
+            #print("Yaw: "+str(self.yaw))
             
+            if len(self.lidar_readings) > 0:
+                if self.lidar_readings[270] == float("inf") or self.lidar_readings[90] == float("inf"):
+                    self.out = True
+                    self.vel.linear.x = 0
+                    self.vel.angular.z = 0
 
-            if self.left_reading == float("inf") or self.right_reading == float("inf"):
-                self.out = True
-                self.vel.linear.x = 0
-                self.vel.angular.z = 0
-
-                self.pub.publish(self.vel)
-                print(".............Can't find left/right wall, exiting...........")
+                    self.pub.publish(self.vel)
+                    print(".............Can't find left/right wall, exiting...........")
             
             self.rate.sleep()
 
