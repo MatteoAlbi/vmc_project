@@ -6,9 +6,12 @@ from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 
+from std_msgs.msg import Header
 from sensor_msgs import point_cloud2
 from sensor_msgs.msg import PointCloud2, PointField
-from std_msgs.msg import Header
+from visualization_msgs.msg import Marker
+from visualization_msgs.msg import MarkerArray 
+from geometry_msgs.msg import Point 
 
 from tf.transformations import euler_from_quaternion
 import numpy as np
@@ -22,8 +25,6 @@ class PotentialField:
     def __init__(self, need_plot=False):
 
         self.lidar_readings = []
-        #self.x = 0
-        #self.y = 0
         # threshold for the lidar: further points are not considered
         self.lidar_threshold = 2 
         # cap for the potential: higher values are capped to this value
@@ -54,15 +55,64 @@ class PotentialField:
         # initialization
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
         self.attr_point = [self.field_x, 0]
-        self.pot_stamp = 0
+        self.time_stamp = 0
         
-        self.pub_cloud = rospy.Publisher("sensor_msgs/PointCloud2", PointCloud2, queue_size=2)
+        self.pub_cloud = rospy.Publisher("rviz_racer/PointCloud2", PointCloud2, queue_size = 2)
+        self.pub_marker = rospy.Publisher("rviz_racer/Marker", MarkerArray, queue_size = 2)
+        self.mark_arr = MarkerArray()
 
-        if self.need_plot:
-            # plot window
-            _, self.ax = plt.subplots(1,2, figsize=(12,6))
-            self.ax[1] = sb.heatmap(self.pot_field, cbar=False)
-            self.ax[1].invert_yaxis()
+        # header of the point cloud
+        self.header_pcl = Header()
+        self.header_pcl.frame_id = "map"
+
+        # marker of the attraction point
+        self.marker_attp = Marker()
+        self.marker_attp.header.frame_id = "map"
+        self.marker_attp.type = 2 #sphere
+        self.marker_attp.id = 0
+        # set scale
+        self.marker_attp.scale.x = 0.1
+        self.marker_attp.scale.y = 0.1
+        self.marker_attp.scale.z = 0.01
+        # set color
+        self.marker_attp.color.r = 0.0
+        self.marker_attp.color.g = 1.0
+        self.marker_attp.color.b = 0.0
+        self.marker_attp.color.a = 1.0
+        # set pose
+        self.marker_attp.pose.position.z = 0
+        self.marker_attp.pose.orientation.x = 0.0
+        self.marker_attp.pose.orientation.y = 0.0
+        self.marker_attp.pose.orientation.z = 0.0
+        self.marker_attp.pose.orientation.w = 1.0
+
+        # marker for the trajectory
+        self.marker_traj = Marker()
+        self.marker_traj.header.frame_id = "map"
+        self.marker_traj.type = Marker.LINE_STRIP
+        self.marker_traj.action = Marker.ADD
+        self.marker_traj.id = 1
+        # set scale
+        self.marker_traj.scale.x = 0.02
+        # set color
+        self.marker_traj.color.r = 1.0
+        self.marker_traj.color.g = 0.0
+        self.marker_traj.color.b = 0.0
+        self.marker_traj.color.a = 0.5
+        # set pose
+        self.marker_traj.pose.position.x = 0
+        self.marker_traj.pose.position.y = 0
+        self.marker_traj.pose.position.z = 0
+        self.marker_traj.pose.orientation.x = 0.0
+        self.marker_traj.pose.orientation.y = 0.0
+        self.marker_traj.pose.orientation.z = 0.0
+        self.marker_traj.pose.orientation.w = 1.0
+
+        # if self.need_plot:
+        #     # plot window
+        #     _, self.ax = plt.subplots(1,2, figsize=(12,6))
+        #     self.ax[1] = sb.heatmap(self.pot_field, cbar=False)
+        #     self.ax[1].invert_yaxis()
 
     def create_field(self):
         self.cartesian = []
@@ -89,7 +139,6 @@ class PotentialField:
                 # apply potential cap
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
                 self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
-
 
     def make_trajectory(self):
         finish = False
@@ -126,10 +175,9 @@ class PotentialField:
         #print("Computed trajectory:\n",self.trajectory,"\n")
 
         if self.need_plot:
-            self.rviz_field()    
+            self.rviz_plot()    
 
         return trajectory
-
 
 # NOT USED: TOO HEAVY COMPUTATIONS
     def plot_heatmap(self):
@@ -153,8 +201,7 @@ class PotentialField:
         self.ax[1] = sb.heatmap(self.pot_field[::-1,::-1], xticklabels=x_tick, yticklabels=y_tick, cbar=False)#, ax=self.ax[1])
         plt.pause(0.0001)
         
-
-# NOT USED, NEED FURTHER DEVELOP
+# NOT USED, NEED FURTHER DEVELOP TO PROPERLY SET COLOR
     def rviz_field_color(self): 
         pot = np.asarray(self.pot_field).reshape(-1)
 
@@ -197,7 +244,7 @@ class PotentialField:
 
         header = Header()
         header.frame_id = "pot_field"
-        header.stamp = self.pot_stamp
+        header.stamp = self.time_stamp
 
         pc2 = point_cloud2.create_cloud(header, fields, xyzrgba)
         #print(pc2)
@@ -210,9 +257,9 @@ class PotentialField:
 
         self.pub_cloud.publish(pc2)
 
-    def rviz_field(self):
+    def rviz_plot(self):
+        ## Cloudpoint of the potential field
         pot = np.asarray(self.pot_field).reshape(-1)
-
         # create x,y,z coordinate
         x = np.repeat(self.pot_x_points, self.field_grid_y).astype(np.float32)
         y = np.tile(self.pot_y_points, self.field_grid_x).astype(np.float32)
@@ -222,14 +269,35 @@ class PotentialField:
         # aggregate data
         xyz = np.transpose(np.vstack((x,y,z)))
         # header info
-        header = Header()
-        header.frame_id = "pot_field"
-        header.stamp = self.pot_stamp
-
+        self.header_pcl.stamp = self.time_stamp
         # create message and publish cloudpoint
-        pc2 = point_cloud2.create_cloud_xyz32(header, xyz)
-        self.pub_cloud.publish(pc2)
+        self.pub_cloud.publish(point_cloud2.create_cloud_xyz32(self.header_pcl, xyz))
 
+        ## Marker of the attraction point
+        self.marker_attp.header.stamp = self.time_stamp
+        # set position
+        self.marker_attp.pose.position.x = self.attr_point[0]
+        self.marker_attp.pose.position.y = self.attr_point[1]
+        # append in marker array
+        self.mark_arr.markers.append(self.marker_attp) 
+
+        ## Display trajectory
+        traj = np.array([[self.pot_x_points[x[0]], self.pot_y_points[x[1]]] for x in self.traj_idx])
+        # append trajectory points to marker
+        self.marker_traj.points=[] 
+        for i in range(traj.shape[0]): 
+            p = Point()
+            p.x = traj[i,0]
+            p.y = traj[i,1]
+            p.z = 0
+            self.marker_traj.points.append(p) 
+        # append in marker array
+        self.mark_arr.markers.append(self.marker_traj)
+
+        # publish
+        self.pub_marker.publish(self.mark_arr)
+        # empty marker array
+        self.mark_arr.markers = []
 
 class TurtleBot:
 
@@ -247,7 +315,7 @@ class TurtleBot:
         # get lidar readings from subscriber
         self.lidar_readings = msg.ranges
 
-        if self.PotField.need_plot: self.PotField.pot_stamp = rospy.Time.now()
+        if self.PotField.need_plot: self.PotField.time_stamp = rospy.Time.now()
 
     def pure_pursuit(self,traj):
         # split trajectory coordinates (local frame)
@@ -339,7 +407,7 @@ class TurtleBot:
         self.max_v = 1.3
         self.look_ahead = 0.5
         self.traj = []
-        self.k_brake_large = 0.4 # may be lowered
+        self.k_brake_large = 0.4 # may be lowered 
         self.k_brake_ahead = 0.8 # may be rised
 
         # subscriber to retrieve x, y, yaw and lidar readings
@@ -362,7 +430,7 @@ class TurtleBot:
         while not rospy.is_shutdown() and not self.out: 
             # compute trajectory using potential field
             self.PotField.lidar_readings = self.lidar_readings
-            if self.PotField.need_plot: self.PotField.pot_stamp = rospy.get_rostime()
+            if self.PotField.need_plot: self.PotField.time_stamp = rospy.get_rostime()
             self.PotField.create_field()
             self.traj = self.PotField.make_trajectory()
             # pure pursuit trajectory follower
