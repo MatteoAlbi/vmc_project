@@ -133,11 +133,12 @@ class PotentialField:
                     self.pot_field[i,j] += self.pot_gain / (dist_sqr)
                 
                 # project attraction point in new rotated frame
-                theta = yaw - self.prev_yaw
+                theta = -(yaw - self.prev_yaw)
                 R = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
+                R_att_point = R @ np.array(self.attr_point)
                 
                 # attractive point potential
-                dist_sqr = abs(x-self.attr_point[0]) + (y-self.attr_point[1])**2
+                dist_sqr = abs(x-R_att_point[0]) + (y-R_att_point[1])**2
                 self.pot_field[i,j] -= self.attr_gain / np.sqrt(dist_sqr)
                 
                 # apply potential cap
