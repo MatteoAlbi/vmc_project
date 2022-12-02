@@ -141,6 +141,8 @@ class PotentialField:
                 self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
 
     def make_trajectory(self):
+        self.create_field()
+
         finish = False
         # offset in grid coordinates
         offset = [(1,0),(1,1),(1,-1)]
@@ -318,10 +320,10 @@ class TurtleBot:
 
         if self.PotField.need_plot: self.PotField.time_stamp = rospy.Time.now()
 
-    def pure_pursuit(self,traj):
+    def pure_pursuit(self):
         # split trajectory coordinates (local frame)
-        xt = list(x[0] for x in traj)
-        yt = list(x[1] for x in traj)
+        xt = list(x[0] for x in self.traj)
+        yt = list(x[1] for x in self.traj)
 
         d_arc = 0
         step = 0
@@ -432,10 +434,10 @@ class TurtleBot:
             # compute trajectory using potential field
             self.PotField.lidar_readings = self.lidar_readings
             if self.PotField.need_plot: self.PotField.time_stamp = rospy.get_rostime()
-            self.PotField.create_field()
             self.traj = self.PotField.make_trajectory()
+            
             # pure pursuit trajectory follower
-            self.pure_pursuit(self.traj)
+            self.pure_pursuit()
             # check stop condition
             if len(self.lidar_readings) > 0:
                 self.exit_control()
