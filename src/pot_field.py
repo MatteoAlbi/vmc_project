@@ -5,8 +5,10 @@ import numpy as np
 
 import seaborn as sb
 import matplotlib.pyplot as plt
-import seaborn as sb
-import matplotlib.pyplot as plt
+
+from sensor_msgs.msg import LaserScan
+
+from vmc_project.msg import Float32List
 
 from std_msgs.msg import Header
 from sensor_msgs import point_cloud2
@@ -15,100 +17,14 @@ from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray 
 from geometry_msgs.msg import Point 
 
+BOOL_PLOT = True
 
 class PotentialField:
 
-    def __init__(self, need_plot=False):
-
-        self.lidar_readings = []
-        # threshold for the lidar: further points are not considered
-        self.lidar_threshold = 2 
-        # cap for the potential: higher values are capped to this value
-        self.pot_cap = 15000
-
-        # field dimensions
-        self.field_x = 2
-        self.field_y = 1
-        # field position offset wrt robot (offset = 0 -> robot in bottom left corner)
-        self.field_offset_x = 0
-        self.field_offset_y = 0.5
-        # number of points per axis
-        self.field_grid_x = 20
-        self.field_grid_y = 20
-        # create grid for the potential
-        self.pot_x_points = np.linspace(0-self.field_offset_x, self.field_x-self.field_offset_x, self.field_grid_x)
-        self.pot_y_points = np.linspace(0-self.field_offset_y, self.field_y-self.field_offset_y, self.field_grid_y)
-
-        # gain for the potential: pot = gain/dist(x,y)
-        self.pot_gain = 1 # gain for repulsive points
-        self.attr_gain = 1000 # gain for attraction point
-        
-        # store computed trajectory
-        self.traj_idx = []
-        # bool variable to display potential 
-        self.need_plot = need_plot
-
-        # initialization
-        self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
-        self.attr_point = [self.field_x, 0]
-        self.time_stamp = 0
-        
-        self.pub_cloud = rospy.Publisher("rviz_racer/PointCloud2", PointCloud2, queue_size = 2)
-        self.pub_marker = rospy.Publisher("rviz_racer/Marker", MarkerArray, queue_size = 2)
-        self.mark_arr = MarkerArray()
-
-        # header of the point cloud
-        self.header_pcl = Header()
-        self.header_pcl.frame_id = "map"
-
-        # marker of the attraction point
-        self.marker_attp = Marker()
-        self.marker_attp.header.frame_id = "map"
-        self.marker_attp.type = 2 #sphere
-        self.marker_attp.id = 0
-        # set scale
-        self.marker_attp.scale.x = 0.1
-        self.marker_attp.scale.y = 0.1
-        self.marker_attp.scale.z = 0.01
-        # set color
-        self.marker_attp.color.r = 0.0
-        self.marker_attp.color.g = 1.0
-        self.marker_attp.color.b = 0.0
-        self.marker_attp.color.a = 1.0
-        # set pose
-        self.marker_attp.pose.position.z = 0
-        self.marker_attp.pose.orientation.x = 0.0
-        self.marker_attp.pose.orientation.y = 0.0
-        self.marker_attp.pose.orientation.z = 0.0
-        self.marker_attp.pose.orientation.w = 1.0
-
-        # marker for the trajectory
-        self.marker_traj = Marker()
-        self.marker_traj.header.frame_id = "map"
-        self.marker_traj.type = Marker.LINE_STRIP
-        self.marker_traj.action = Marker.ADD
-        self.marker_traj.id = 1
-        # set scale
-        self.marker_traj.scale.x = 0.02
-        # set color
-        self.marker_traj.color.r = 1.0
-        self.marker_traj.color.g = 0.0
-        self.marker_traj.color.b = 0.0
-        self.marker_traj.color.a = 0.5
-        # set pose
-        self.marker_traj.pose.position.x = 0
-        self.marker_traj.pose.position.y = 0
-        self.marker_traj.pose.position.z = 0
-        self.marker_traj.pose.orientation.x = 0.0
-        self.marker_traj.pose.orientation.y = 0.0
-        self.marker_traj.pose.orientation.z = 0.0
-        self.marker_traj.pose.orientation.w = 1.0
-
-        # if self.need_plot:
-        #     # plot window
-        #     _, self.ax = plt.subplots(1,2, figsize=(12,6))
-        #     self.ax[1] = sb.heatmap(self.pot_field, cbar=False)
-        #     self.ax[1].invert_yaxis()
+    def call_Lidar(self, msg):
+        # get lidar readings from subscriber
+        self.lidar_readings = msg.ranges
+        if self.need_plot: self.time_stamp = rospy.Time.now()
 
     def create_field(self):
         self.cartesian = []
@@ -130,8 +46,11 @@ class PotentialField:
                 
                 # attractive point potential
                 dist_sqr = abs(x-self.attr_point[0]) + (y-self.attr_point[1])**2
-                self.pot_field[i,j] -= self.attr_gain / np.sqrt(dist_sqr)
-                
+                if dist_sqr != 0:
+                    self.pot_field[i,j] -= self.attr_gain / np.sqrt(dist_sqr)
+                else:
+                    self.pot_field[i,j] -= self.pot_cap
+
                 # apply potential cap
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
                 self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
@@ -297,3 +216,125 @@ class PotentialField:
         self.pub_marker.publish(self.mark_arr)
         # empty marker array
         self.mark_arr.markers = []
+
+    def __init__(self, need_plot=BOOL_PLOT):
+
+        self.lidar_readings = []
+        # threshold for the lidar: further points are not considered
+        self.lidar_threshold = 2 
+        # cap for the potential: higher values are capped to this value
+        self.pot_cap = 15000
+
+        # field dimensions
+        self.field_x = 2
+        self.field_y = 1
+        # field position offset wrt robot (offset = 0 -> robot in bottom left corner)
+        self.field_offset_x = 0
+        self.field_offset_y = 0.5
+        # number of points per axis
+        self.field_grid_x = 20
+        self.field_grid_y = 20
+        # create grid for the potential
+        self.pot_x_points = np.linspace(0-self.field_offset_x, self.field_x-self.field_offset_x, self.field_grid_x)
+        self.pot_y_points = np.linspace(0-self.field_offset_y, self.field_y-self.field_offset_y, self.field_grid_y)
+
+        # gain for the potential: pot = gain/dist(x,y)
+        self.pot_gain = 1 # gain for repulsive points
+        self.attr_gain = 1000 # gain for attraction point
+        
+        # store computed trajectory
+        self.traj_idx = []
+        # bool variable to display potential 
+        self.need_plot = need_plot
+
+        # initialization
+        self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
+        self.attr_point = [self.field_x, 0]
+        self.time_stamp = 0
+        
+        rospy.Subscriber('scan', LaserScan, self.call_Lidar)
+        self.pub_traj = rospy.Publisher("potf_traj", Float32List, queue_size = 1)
+        self.pub_cloud = rospy.Publisher("potf_plotter/PointCloud2", PointCloud2, queue_size = 2)
+        self.pub_marker = rospy.Publisher("potf_plotter/MarkerArray", MarkerArray, queue_size = 2)
+        self.mark_arr = MarkerArray()
+
+        # message for trajectory
+        self.traj_msg = Float32List
+
+        # header of the point cloud
+        self.header_pcl = Header()
+        self.header_pcl.frame_id = "map"
+
+        # marker of the attraction point
+        self.marker_attp = Marker()
+        self.marker_attp.header.frame_id = "map"
+        self.marker_attp.type = 2 #sphere
+        self.marker_attp.id = 0
+        # set scale
+        self.marker_attp.scale.x = 0.1
+        self.marker_attp.scale.y = 0.1
+        self.marker_attp.scale.z = 0.01
+        # set color
+        self.marker_attp.color.r = 0.0
+        self.marker_attp.color.g = 1.0
+        self.marker_attp.color.b = 0.0
+        self.marker_attp.color.a = 1.0
+        # set pose
+        self.marker_attp.pose.position.z = 0
+        self.marker_attp.pose.orientation.x = 0.0
+        self.marker_attp.pose.orientation.y = 0.0
+        self.marker_attp.pose.orientation.z = 0.0
+        self.marker_attp.pose.orientation.w = 1.0
+
+        # marker for the trajectory
+        self.marker_traj = Marker()
+        self.marker_traj.header.frame_id = "map"
+        self.marker_traj.type = Marker.LINE_STRIP
+        self.marker_traj.action = Marker.ADD
+        self.marker_traj.id = 1
+        # set scale
+        self.marker_traj.scale.x = 0.02
+        # set color
+        self.marker_traj.color.r = 1.0
+        self.marker_traj.color.g = 0.0
+        self.marker_traj.color.b = 0.0
+        self.marker_traj.color.a = 0.5
+        # set pose
+        self.marker_traj.pose.position.x = 0
+        self.marker_traj.pose.position.y = 0
+        self.marker_traj.pose.position.z = 0
+        self.marker_traj.pose.orientation.x = 0.0
+        self.marker_traj.pose.orientation.y = 0.0
+        self.marker_traj.pose.orientation.z = 0.0
+        self.marker_traj.pose.orientation.w = 1.0
+
+        # if self.need_plot:
+        #     # plot window
+        #     _, self.ax = plt.subplots(1,2, figsize=(12,6))
+        #     self.ax[1] = sb.heatmap(self.pot_field, cbar=False)
+        #     self.ax[1].invert_yaxis()
+
+        self.sample_time = 0.01 # may be lowered
+        self.rate = rospy.Rate(1/self.sample_time)
+
+        # wait to get first laserscan
+        while len(self.lidar_readings) == 0:
+            self.rate.sleep()
+
+        while not rospy.is_shutdown():
+            traj = self.make_trajectory()
+            traj_msg = Float32List()
+            traj_msg.x = traj[:,0].tolist()
+            traj_msg.y = traj[:,1].tolist()
+            self.pub_traj.publish(traj_msg)
+
+            self.rate.sleep()
+
+if __name__ == '__main__':
+    # run node
+    rospy.init_node('pot_field')
+    try:
+        pot_field = PotentialField()          
+
+    except rospy.ROSInterruptException: pass
+
