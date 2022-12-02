@@ -52,11 +52,11 @@ class PotentialField:
         # bool variable to display potential 
         self.need_plot = need_plot
 
-        # initialization
+        # field variables initialization
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
         self.attr_point = [self.field_x, 0]
         self.time_stamp = 0
-        
+        self.prev_yaw = 0
         self.pub_cloud = rospy.Publisher("rviz_racer/PointCloud2", PointCloud2, queue_size = 2)
         self.pub_marker = rospy.Publisher("rviz_racer/Marker", MarkerArray, queue_size = 2)
         self.mark_arr = MarkerArray()
@@ -114,7 +114,7 @@ class PotentialField:
         #     self.ax[1] = sb.heatmap(self.pot_field, cbar=False)
         #     self.ax[1].invert_yaxis()
 
-    def create_field(self):
+    def create_field(self, yaw):
         self.cartesian = []
         self.pot_field = np.zeros((self.field_grid_x,self.field_grid_y))
 
@@ -132,6 +132,10 @@ class PotentialField:
                     # potential contribute of the point
                     self.pot_field[i,j] += self.pot_gain / (dist_sqr)
                 
+                # project attraction point in new rotated frame
+                theta = yaw - self.prev_yaw
+                R = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
+                
                 # attractive point potential
                 dist_sqr = abs(x-self.attr_point[0]) + (y-self.attr_point[1])**2
                 self.pot_field[i,j] -= self.attr_gain / np.sqrt(dist_sqr)
@@ -140,7 +144,10 @@ class PotentialField:
                 self.pot_field[i,j] = min(self.pot_field[i,j], self.pot_cap)
                 self.pot_field[i,j] = max(self.pot_field[i,j], -self.pot_cap)
 
-    def make_trajectory(self):
+    def make_trajectory(self, yaw):
+        self.create_field(yaw)
+        self.prev_yaw = yaw
+
         finish = False
         # offset in grid coordinates
         offset = [(1,0),(1,1),(1,-1)]
@@ -317,10 +324,10 @@ class TurtleBot:
 
         if self.PotField.need_plot: self.PotField.time_stamp = rospy.Time.now()
 
-    def pure_pursuit(self,traj):
+    def pure_pursuit(self):
         # split trajectory coordinates (local frame)
-        xt = list(x[0] for x in traj)
-        yt = list(x[1] for x in traj)
+        xt = list(x[0] for x in self.traj)
+        yt = list(x[1] for x in self.traj)
 
         d_arc = 0
         step = 0
@@ -385,6 +392,7 @@ class TurtleBot:
         self.x = 0
         self.y = 0
         self.yaw = 0
+        self.prev_yaw = 0
 
         # initialize potential field object to compute trajectory
         self.PotField = PotentialField(need_plot=BOOL_PLOT)
@@ -411,7 +419,7 @@ class TurtleBot:
         self.k_brake_ahead = 0.8 # may be rised
 
         # subscriber to retrieve x, y, yaw and lidar readings
-        #rospy.Subscriber('odom', Odometry, self.call_position) # not used
+        rospy.Subscriber('odom', Odometry, self.call_position) # not used
         rospy.Subscriber('scan', LaserScan, self.call_Lidar)
 
         # control velocity message
@@ -431,10 +439,11 @@ class TurtleBot:
             # compute trajectory using potential field
             self.PotField.lidar_readings = self.lidar_readings
             if self.PotField.need_plot: self.PotField.time_stamp = rospy.get_rostime()
-            self.PotField.create_field()
-            self.traj = self.PotField.make_trajectory()
+            self.traj = self.PotField.make_trajectory(self.yaw)
+
             # pure pursuit trajectory follower
-            self.pure_pursuit(self.traj)
+            self.pure_pursuit()
+
             # check stop condition
             if len(self.lidar_readings) > 0:
                 self.exit_control()
