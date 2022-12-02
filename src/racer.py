@@ -4,26 +4,11 @@ import rospy
 import numpy as np
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
-from nav_msgs.msg import Odometry
-
-from std_msgs.msg import Header
-from sensor_msgs import point_cloud2
-from sensor_msgs.msg import PointCloud2, PointField
-from visualization_msgs.msg import Marker
-from visualization_msgs.msg import MarkerArray 
-from geometry_msgs.msg import Point 
+#from nav_msgs.msg import Odometry
 
 from tf.transformations import euler_from_quaternion
-import numpy as np
-import seaborn as sb
-import matplotlib.pyplot as plt
 
-BOOL_PLOT = True
-
-class PotentialField:
-
-    def __init__(self, need_plot=False):
-
+<<<<<<< HEAD
         self.lidar_readings = []
         # threshold for the lidar: further points are not considered
         self.lidar_threshold = 2 
@@ -306,6 +291,11 @@ class PotentialField:
         self.pub_marker.publish(self.mark_arr)
         # empty marker array
         self.mark_arr.markers = []
+=======
+from pot_field import PotentialField
+
+BOOL_PLOT = True
+>>>>>>> main
 
 class TurtleBot:
 
@@ -401,9 +391,9 @@ class TurtleBot:
 
         # PID parameters
         # sub 1min
-        self.Kp = 0.55
-        self.Kd = 0.04
-        self.Ki = 0.01
+        self.Kp = 0.5
+        self.Kd = 0.045
+        self.Ki = 0.005
         # sub 50s: unstable
         # self.Kp = 0.58
         # self.Kd = 0.03
@@ -417,7 +407,7 @@ class TurtleBot:
         self.look_ahead = 0.5
         self.traj = []
         self.k_brake_large = 0.4 # may be lowered 
-        self.k_brake_ahead = 0.8 # may be rised
+        self.k_brake_ahead = 1.1 # may be rised
 
         # subscriber to retrieve x, y, yaw and lidar readings
         rospy.Subscriber('odom', Odometry, self.call_position) # not used
@@ -425,7 +415,7 @@ class TurtleBot:
 
         # control velocity message
         self.vel = Twist()
-        self.vel.linear.x = self.max_v 
+        self.vel.linear.x = 0
         self.vel.angular.x = 0
         self.vel.angular.y = 0
         self.vel.angular.z = 0
@@ -440,11 +430,18 @@ class TurtleBot:
             # compute trajectory using potential field
             self.PotField.lidar_readings = self.lidar_readings
             if self.PotField.need_plot: self.PotField.time_stamp = rospy.get_rostime()
+<<<<<<< HEAD
             self.traj = self.PotField.make_trajectory(self.yaw)
 
             # pure pursuit trajectory follower
             self.pure_pursuit()
 
+=======
+            self.traj = self.PotField.make_trajectory()
+            
+            # pure pursuit trajectory follower
+            self.pure_pursuit()
+>>>>>>> main
             # check stop condition
             if len(self.lidar_readings) > 0:
                 self.exit_control()
