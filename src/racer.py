@@ -271,7 +271,8 @@ class PotentialField:
         # header info
         self.header_pcl.stamp = self.time_stamp
         # create message and publish cloudpoint
-        self.pub_cloud.publish(point_cloud2.create_cloud_xyz32(self.header_pcl, xyz))
+        pc2 = point_cloud2.create_cloud_xyz32(self.header_pcl, xyz)
+        self.pub_cloud.publish(pc2)
 
         ## Marker of the attraction point
         self.marker_attp.header.stamp = self.time_stamp
@@ -416,7 +417,7 @@ class TurtleBot:
 
         # control velocity message
         self.vel = Twist()
-        self.vel.linear.x = self.max_v 
+        self.vel.linear.x = 0
         self.vel.angular.x = 0
         self.vel.angular.y = 0
         self.vel.angular.z = 0
