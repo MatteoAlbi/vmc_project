@@ -71,3 +71,8 @@ The lognitudinal control is impemented setting a maximum speed the robot can ach
 - Closest point distance in front of the robot.
   
 Each contribution has its own gain. Tuned parameters are the braking gains and the max velocity.
+
+## Further development
+A possible upgrade is to choose the look-ahead distance as function of the error in the yaw angle or the distance of the walls. 
+
+Moreover, we tried to use two different nodes, the first to control the robot, and the second to compute the trajectory and plot the info on rviz (code can be found in the branch *__dev__* ). The second publishes the computed trajectory on a topic the first node is subscribed to. This way the second node can be utilized easily for debugging, being it detached from the controller node. However, the performances of the whole system seem to deteriorate, probably due to the lag in the trajectory communication.
